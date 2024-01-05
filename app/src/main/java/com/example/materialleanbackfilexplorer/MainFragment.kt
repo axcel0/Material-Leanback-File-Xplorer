@@ -1,9 +1,8 @@
 package com.example.materialleanbackfilexplorer
 
-import java.util.Collections
-import java.util.Timer
-import java.util.TimerTask
-
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.Drawable
@@ -12,43 +11,30 @@ import android.os.Handler
 import android.os.Looper
 import androidx.leanback.app.BackgroundManager
 import androidx.leanback.app.BrowseSupportFragment
-import androidx.leanback.widget.ArrayObjectAdapter
-import androidx.leanback.widget.HeaderItem
-import androidx.leanback.widget.ImageCardView
-import androidx.leanback.widget.ListRow
-import androidx.leanback.widget.ListRowPresenter
-import androidx.leanback.widget.OnItemViewClickedListener
-import androidx.leanback.widget.OnItemViewSelectedListener
-import androidx.leanback.widget.Presenter
-import androidx.leanback.widget.Row
-import androidx.leanback.widget.RowPresenter
+import androidx.leanback.widget.*
 import androidx.core.app.ActivityOptionsCompat
 import androidx.core.content.ContextCompat
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Gravity
 import android.view.ViewGroup
-import android.widget.TextView
-import android.widget.Toast
-
 import com.bumptech.glide.Glide
-import com.bumptech.glide.request.target.SimpleTarget
+import com.bumptech.glide.request.target.CustomTarget
 import com.bumptech.glide.request.transition.Transition
+import com.google.android.material.snackbar.Snackbar
+import com.google.android.material.textview.MaterialTextView
 
-/**
- * Loads a grid of cards with movies to browse.
- */
 class MainFragment : BrowseSupportFragment() {
 
     private val mHandler = Handler(Looper.myLooper()!!)
     private lateinit var mBackgroundManager: BackgroundManager
     private var mDefaultBackground: Drawable? = null
     private lateinit var mMetrics: DisplayMetrics
-    private var mBackgroundTimer: Timer? = null
+    private var mBackgroundTimer: ScheduledFuture<*>? = null
+    private val executorService = Executors.newSingleThreadScheduledExecutor()
     private var mBackgroundUri: String? = null
 
     override fun onActivityCreated(savedInstanceState: Bundle?) {
-        Log.i(TAG, "onCreate")
         super.onActivityCreated(savedInstanceState)
 
         prepareBackgroundManager()
@@ -62,12 +48,13 @@ class MainFragment : BrowseSupportFragment() {
 
     override fun onDestroy() {
         super.onDestroy()
-        Log.d(TAG, "onDestroy: " + mBackgroundTimer?.toString())
-        mBackgroundTimer?.cancel()
+        mBackgroundTimer?.let {
+            Log.d(TAG, "onDestroy: $it")
+            it.cancel(false)
+        }
     }
 
     private fun prepareBackgroundManager() {
-
         mBackgroundManager = BackgroundManager.getInstance(activity)
         mBackgroundManager.attach(requireActivity().window)
         mDefaultBackground = ContextCompat.getDrawable(requireContext(), R.drawable.default_background)
@@ -77,27 +64,21 @@ class MainFragment : BrowseSupportFragment() {
 
     private fun setupUIElements() {
         title = getString(R.string.browse_title)
-        // over title
+
         headersState = BrowseSupportFragment.HEADERS_ENABLED
         isHeadersTransitionOnBackEnabled = true
 
-        // set fastLane (or headers) background color
         brandColor = ContextCompat.getColor(requireContext(), R.color.fastlane_background)
-        // set search icon color
+
         searchAffordanceColor = ContextCompat.getColor(requireContext(), R.color.search_opaque)
     }
 
     private fun loadRows() {
         val list = MovieList.list
-
         val rowsAdapter = ArrayObjectAdapter(ListRowPresenter())
         val cardPresenter = CardPresenter()
 
         for (i in 0 until NUM_ROWS) {
-            if (i != 0) {
-                Collections.shuffle(list)
-            }
-
             val listRowAdapter = ArrayObjectAdapter(cardPresenter)
             for (j in 0 until NUM_COLS) {
                 listRowAdapter.add(list[j % 5])
@@ -120,8 +101,7 @@ class MainFragment : BrowseSupportFragment() {
 
     private fun setupEventListeners() {
         setOnSearchClickedListener {
-            Toast.makeText(requireContext(), "Implement your own in-app search", Toast.LENGTH_LONG)
-                .show()
+            Snackbar.make(requireView(), "Implement your own in-app search", Snackbar.LENGTH_LONG).show()
         }
 
         onItemViewClickedListener = ItemViewClickedListener()
@@ -135,26 +115,33 @@ class MainFragment : BrowseSupportFragment() {
             rowViewHolder: RowPresenter.ViewHolder,
             row: Row
         ) {
+            when (item) {
+                is Movie -> handleMovieClick(item, itemViewHolder)
+                is String -> handleStringClick(item)
+            }
+        }
 
-            if (item is Movie) {
-                Log.d(TAG, "Item: " + item.toString())
-                val intent = Intent(context!!, DetailsActivity::class.java)
-                intent.putExtra(DetailsActivity.MOVIE, item)
+        private fun handleMovieClick(movie: Movie, viewHolder: Presenter.ViewHolder) {
+            Log.d(TAG, "Item: $movie")
+            val intent = Intent(context!!, DetailsActivity::class.java).apply {
+                putExtra(DetailsActivity.MOVIE, movie)
+            }
 
-                val bundle = ActivityOptionsCompat.makeSceneTransitionAnimation(
-                    activity!!,
-                    (itemViewHolder.view as ImageCardView).mainImageView,
-                    DetailsActivity.SHARED_ELEMENT_NAME
-                )
-                    .toBundle()
-                startActivity(intent, bundle)
-            } else if (item is String) {
-                if (item.contains(getString(R.string.error_fragment))) {
-                    val intent = Intent(context!!, BrowseErrorActivity::class.java)
-                    startActivity(intent)
-                } else {
-                    Toast.makeText(context!!, item, Toast.LENGTH_SHORT).show()
-                }
+            val bundle = ActivityOptionsCompat.makeSceneTransitionAnimation(
+                activity!!,
+                (viewHolder.view as ImageCardView).mainImageView,
+                DetailsActivity.SHARED_ELEMENT_NAME
+            ).toBundle()
+
+            startActivity(intent, bundle)
+        }
+
+        private fun handleStringClick(item: String) {
+            if (item.contains(getString(R.string.error_fragment))) {
+                val intent = Intent(context!!, BrowseErrorActivity::class.java)
+                startActivity(intent)
+            } else {
+                Snackbar.make(view!!, item, Snackbar.LENGTH_LONG).show()
             }
         }
     }
@@ -164,8 +151,8 @@ class MainFragment : BrowseSupportFragment() {
             itemViewHolder: Presenter.ViewHolder?, item: Any?,
             rowViewHolder: RowPresenter.ViewHolder, row: Row
         ) {
-            if (item is Movie) {
-                mBackgroundUri = item.backgroundImageUrl
+            (item as? Movie)?.let {
+                mBackgroundUri = it.backgroundImageUrl
                 startBackgroundTimer()
             }
         }
@@ -178,48 +165,52 @@ class MainFragment : BrowseSupportFragment() {
             .load(uri)
             .centerCrop()
             .error(mDefaultBackground)
-            .into<SimpleTarget<Drawable>>(
-                object : SimpleTarget<Drawable>(width, height) {
-                    override fun onResourceReady(
-                        drawable: Drawable,
-                        transition: Transition<in Drawable>?
-                    ) {
-                        mBackgroundManager.drawable = drawable
-                    }
-                })
-        mBackgroundTimer?.cancel()
+            .into(object : CustomTarget<Drawable>(width, height) {
+                override fun onResourceReady(
+                    drawable: Drawable,
+                    transition: Transition<in Drawable>?
+                ) {
+                    mBackgroundManager.drawable = drawable
+                }
+
+                override fun onLoadCleared(placeholder: Drawable?) {
+                    mBackgroundManager.drawable = placeholder ?: mDefaultBackground
+                }
+            })
     }
 
     private fun startBackgroundTimer() {
-        mBackgroundTimer?.cancel()
-        mBackgroundTimer = Timer()
-        mBackgroundTimer?.schedule(UpdateBackgroundTask(), BACKGROUND_UPDATE_DELAY.toLong())
+        mBackgroundTimer?.cancel(false)
+        mBackgroundTimer = executorService.schedule(
+            UpdateBackgroundTask(),
+            BACKGROUND_UPDATE_DELAY.toLong(),
+            TimeUnit.MILLISECONDS
+        )
     }
 
-    private inner class UpdateBackgroundTask : TimerTask() {
-
+    private inner class UpdateBackgroundTask : Runnable {
         override fun run() {
             mHandler.post { updateBackground(mBackgroundUri) }
         }
     }
 
     private inner class GridItemPresenter : Presenter() {
-        override fun onCreateViewHolder(parent: ViewGroup): Presenter.ViewHolder {
-            val view = TextView(parent.context)
+        override fun onCreateViewHolder(parent: ViewGroup): ViewHolder {
+            val view = MaterialTextView(parent.context)
             view.layoutParams = ViewGroup.LayoutParams(GRID_ITEM_WIDTH, GRID_ITEM_HEIGHT)
             view.isFocusable = true
             view.isFocusableInTouchMode = true
             view.setBackgroundColor(ContextCompat.getColor(context!!, R.color.default_background))
             view.setTextColor(Color.WHITE)
             view.gravity = Gravity.CENTER
-            return Presenter.ViewHolder(view)
+            return ViewHolder(view)
         }
 
-        override fun onBindViewHolder(viewHolder: Presenter.ViewHolder, item: Any) {
-            (viewHolder.view as TextView).text = item as String
+        override fun onBindViewHolder(viewHolder: ViewHolder, item: Any) {
+            (viewHolder.view as MaterialTextView).text = item as String
         }
 
-        override fun onUnbindViewHolder(viewHolder: Presenter.ViewHolder) {}
+        override fun onUnbindViewHolder(viewHolder: ViewHolder) {}
     }
 
     companion object {
